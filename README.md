@@ -1,8 +1,8 @@
 # Compiling to PDF
-To compile to `.pdf` from `.md`, run
+To compile to `.pdf` from `.md`, run in the corresponding directory
 
 ```console
-$ python3 compile.py
+./output-pdf.sh
 ```
 
-Requires `pandoc` and $\LaTeX$. Outputs are placed in `ba5-summaries/pdf/`
+Requires `pandoc` and $\LaTeX$. 
