@@ -1,4 +1,4 @@
-# Lecture 02 relational model
+# Lecture 02: Relational Model
 
 This is the model that has prevailed for most use cases.
 
