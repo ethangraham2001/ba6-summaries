@@ -130,11 +130,134 @@ semi-decidable algorithms for context-free grammars. Some languages are
 inherently ambiguous, and there exist parsing algorithms designed to handle
 such cases.
 
-## Handling Infinite Recursion
+## Left and Right Recursion
 
-We can transform production rules to eliminate left or right recursion.
+We can transform production rules to eliminate left or right recursion. 
+A production rule is left (right) recursive if it features a non-terminal symbol
+on the left (right) such that we can apply the rule recursively.
 
-- Add a new non-terminal symbol $S'$ at the end (left recursive) or start
-(rigth recursive) of non-recursive production rules.
+$S \rightarrow Sa | b$ is left-recursive, and $S \rightarrow aS | b$ is 
+right-recursive. We note that left or right recursion may also involve some
+indirection between rules *(i.e. won't be directly recursive, but will be after
+applying multiple rules)*.
+
+To eliminate left or right recus
+
+- Add a new non-terminal symbol $S'$ at the end (left-recursive) or start
+(right-recursive) of non-recursive production rules.
 - The production rules for $S'$ swap the position of the recursion.
+
+## Left and Right Factoring
+
+Happens when two production rules have the same prefix or suffix. This is a 
+problem because many grammars naturally exhibit situations where common 
+prefixes occur. It is convenient for some parsing algorithms to process symbols
+from left to right *(or conversely)* and select the rule to apply immediately!
+
+- top-down parsers suffer from left-factoring
+- bottom-up parses suffer from right-factoring
+
+**Example:** $S \rightarrow aT | aTbS | T$ suffers from left-factoring.
+
+Fortunately, we can offer factor out common prefixes/suffixes in a separate
+production rule to "delay" decisions depending on prefixes / suffixes. The
+above example becomes
+
+- $S \rightarrow aTU | T$
+- $U \rightarrow bS | \varepsilon$
+
+## Parsing Algorithms
+
+### LR Parsing *(left-to-right, rightmost derivation)*
+
+Given a stack of input predictions and an input to parse, LR parser repeatedly
+does either of the following:
+
+- **Shift:** push the input's head onto the stack
+- **Reduce:** replace elements at the top of the stack by a non-terminal symbol
+
+We use different policies for deciding when we should reduce. For example
+longest-match, shortest-match, etc...
+
+## Parser Combinators
+
+Intuitively a parser is a function
+
+$$
+p: \, \Sigma^\star \rightarrow R \times \Sigma^\star
+$$
+
+where 
+
+- $\Sigma$ is an alphabet
+- $R$ is the parser's output *(a parse tree)*
+
+We take the input, and return a parse tree + the remaining part of the word we
+haven't parsed yet.
+
+Since functions compose, we can compose parsers
+
+$$
+f(p_1, p_2)(w) = (r_1, r_2), w_2
+$$
+
+where $p_1(2) = (r_1, w_1) \wedge p_2(w_1) = (r_2, w_2)$
+
+Scala example:
+
+```scala
+// `S` is symbol type, `s` and `e` are the start and end positions
+// `R` is the result
+trait Parser[S, R]:
+    def apply(w: Array[S], s: Int, e: Int): (R, Int)
+```
+
+Here is an example of an actual implementation
+
+```scala
+final class One[S](letter: S) extends Parser[S, S]:
+    def parse(w: Array[S], s: Int, e: Int) =
+        if w(s) == letter then (letter, s + 1) else
+            throw IllegalArgumentException()
+
+val s = "aab".codePoints().toArray
+val a = One('a': Int)
+```
+
+We can extend this as follows:
+
+```scala
+extension[S, R1] (self: Parser[S, R1])
+    // concatenation of parsers
+    infix def ++ [R2](other: Parser[S, R2]) = new Parser[S, (R1, R2)]:
+        def apply(w: Array[S], s: Int, e: Int) =
+            val (r1, e1) = self(w, s, e)
+            val (r2, e2) = other(w, e1, e) // picks up where the previous left off
+            ((r1, r2), e2)
+
+val s = "aab".codePoints().toArray
+val a = One('a': Int)
+val b = One('b': Int)
+println((a ++ a ++ b)(s, 0, s.length)) // (((97, 97), 98), 3)
+```
+
+Here is another parser combinator:
+
+```scala
+extension[S, R1] (self: Parser[S, R1])
+    // parses the union of languages (symbol is in one or the other)
+    infix def || [R2](other: Parser[S, R2]) = new Parser[S, R1 | R2]:
+        def apply(w: Array[S], s: Int, e: Int) =
+            try self(w, s, e) catch _ => other(w, s, e)
+
+val s = "aab".codePoints().toArray
+val a = One('a': Int)
+val b = One('b': Int)
+// this next line uses backtracking. Tries to parse a++b union with a
+println(((a ++ b) || a)(s, 0, s.length)) // (97, 1)
+```
+
+- `a++b` fails to parse `"aab"`
+- `a` parses it, and returns `('a', 1)` which will be outputted, by definition
+of the union of parsers. Thus we have only parsed the first symbol.
 
