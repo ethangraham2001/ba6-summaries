@@ -88,9 +88,12 @@ $$
 trait Term:
     def free: Set[Variable] =
         this match
-    case x: Variable => Set(x)
-    case Application(f, a) => f.free.union(a.free)
-    case Abstraction(x, e) => e.free.excl(x)
+            // if `x` is a variable, return the singleton set
+            case x: Variable => Set(x)
+            // all variables in `f` and `a` remain free
+            case Application(f, a) => f.free.union(a.free)
+            // the free variables in `e` excluding `x` the parameter of the abstraction
+            case Abstraction(x, e) => e.free.excl(x)
 ```
 
 ### $\alpha$ conversion
@@ -103,4 +106,111 @@ not to $\lambda b. \lambda b.b$.
 
 Two terms are called $\alpha$ equivalent if they only differ in the choice of
 bound variables, e.g. $\lambda a.a$ is $\alpha$ to $\lambda b.b$.
+
+### Capture-avoiding Substitution
+
+This is the act of substituting an unbound variable inside of a lambda body.
+We write $e[x \rightarrow e']$, which means substituting $x$ for $e'$ in 
+expression $e$. For example, $x[x\rightarrow e'] = e'$ which makes sense as 
+replacing $x$ by $e'$ in the identity abstraction should yield $e'$.
+
+In scala, we could write
+
+```scala
+trait Term:
+    def free: Set[String] = ...
+    def replace(x: Variable, e: Term): Term =
+        this match
+            // x[e -> x] = e
+            case y: Variable => if (x == y) then e else this
+
+            // when applying a function, replace any occurrences in the body of
+            // x with e, and any occurrences in the argument
+            case Application(f, a) => Application(f.replace(x, e), a.replace(x, e))
+            
+            case Abstraction(y, ee) => if x == y then this else
+                // if the term has y as a free variable, it will be bound afterwards
+                // which we don't want, so we replace y with a fresh variable
+                val r = if e.free.contains(y) then e.replace(y, Variable.fresh()) else e
+                Abstraction(y, ee.replace(x, r))
+object Variable:
+def fresh() = Variable(UUID.randomUUID.toString)
+```
+
+### $\beta$ reduction
+
+Describes function calls, intuitively giving us a mental model to understanding
+applications in a purely functional setting $\rightarrow$ we substitute 
+arguments computed at the call-site for their corresonding parameters in the
+callee.
+
+## Inference Rules
+
+Logical statements of the form
+
+$$
+\frac{
+    p_1 p_2 \dots p_n
+} {
+    q
+}
+$$
+
+A rule without any premise is called an axiom. We define
+
+- **small step** or structural operational semantics which are inference rules
+describing state transitions
+- **big step** or natural semantics which are inference rules describing
+relations.
+
+## Extending Lambda Calculus with Types
+
+We have the following static semantics, where $\Gamma$ can be thought of as the
+context; a mapping of terms to type.
+
+$$
+\frac{
+    \Gamma \vdash e_1 : \tau \rightarrow \sigma
+    \,
+    \Gamma \vdash e_2 : \tau
+}{
+    \Gamma \vdash e_1 e_2
+}
+$$
+
+Think of this one like
+
+```scala
+val function[A, B]: (A => B)
+val term: A = ...
+
+function(term) // has type B
+```
+
+$$
+\frac{
+    \Gamma, x:\tau \vdash e:\sigma
+}{
+    \Gamma \vdash \lambda x: \tau .e : \tau \rightarrow \sigma
+}
+$$
+
+Sort of equivalent to 
+
+```scala
+val e: B // may contain x's
+val function(x: A) = e // type is A => B
+```
+
+
+
+$$
+\frac{
+    x : \tau \in \Gamma
+}{
+    \Gamma \vdash x : \tau
+}
+$$
+
+*If a mapping is in $\Gamma$, then $\Gamma$ shows the mapping*
 

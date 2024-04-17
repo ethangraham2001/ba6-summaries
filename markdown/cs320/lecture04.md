@@ -74,6 +74,45 @@ Production rules are restricted to
 Given two context-free grammars $G_1, G_2$ deciding whether $L(G_1) = L(G_2)$
 is undecidable.
 
+#### Pushdown Automaton
+
+A finite-state automaton that uses a stack to keep state of the input it has
+processes so far.
+
+Pushdown automata, contrary to DFA or NFA, can recognize context-free grammars.
+
+- For any PDA, there exists a CFG that generates the same language recognized by
+it
+- For any CFG, there exists a PDA that recognizes the same language that it
+generates.
+
+This equivalence is known as the Chomsky-Schützenberger theorem.
+
+The stack is just there for keeping internal state of our program - we can do
+whatever we want to with it.
+
+
+The stack is just there for keeping internal state of our program - we can do
+whatever we want to with it.
+#### Greibach Normal Form
+
+This is when the right-hand side of all production rules start with a terminal
+symbol, optionally followed by some variables. More precisely, all production
+rules are of the form
+
+$$
+A \rightarrow a A_1 A_2 \dots A_n
+$$
+
+This ensures that every transition rule is either terminal, or ends only in
+non-terminal symbols.
+
+Every context free grammar can be transformed into an equivalent Greibach 
+normal form.
+
+Given a grammar in GNF and a derivable string in the grammar with length $n$,
+any top-down parser will halt at depth $n$.
+
 ### Type 3: Regular Grammars
 
 Productions rules limited to the following forms
