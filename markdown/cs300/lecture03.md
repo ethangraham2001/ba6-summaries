@@ -1,213 +1,176 @@
-# Lecture 03: Storage, Files and Indexing
+# Lecture 03: Storage
 
-## File and access layer
+A database is just sort of a file of records. We need to provide an api for
 
-We used to store tables as files on a filesystem, however now we prefer storing
-them on a partition directly on-disk to take control away from the filesystem.
+- creation
+- deletion
+- insertion
+- modification
+- retrieval (single record, range queries, as well as all records)
 
-For this lecture we consider
+## File organization
 
-$$
-file \equiv table
-$$
+We can think of a table as a file. This table is split up into pages. This is
+how things are stored on persistent storage (by blocks). As we move up from 
+disk all the way to L1 cache, the page sizes get smaller at every step.
 
-When we store on disk, we have to choose whether we should store by row or by
-column. This will affect access speed, as disk-access is sped up immensely if
-accesses are sequential.
+A page itself consists of multiple records.
 
-- If we tend to access certain fields frequently based on some predicate, then
-storing by column is a better option
-- If we frequently access all fields of a table, then storing by row may be
-better.
+## N-ary storage model
 
-## File Organization
+This is the row-storage model. Every page is just a collection of slots which
+stores / maps a record each: the slot either stores the record, or stores a 
+pointer to it.
 
-File storage is done by block $\equiv$ page, which is the minimal access unit.
-Therefore, whenever we read anything from disk it will come in a block, and the
-whole block comes with it. There are different block sizes at every level of the
-cache/memory hierarchy - for example, L1 cache block size will be smaller than
-disk block size. Typical block sizes on disk are 4KB and 8KB.
+We store a record header: if there are variable-sized attributes, this is where
+that information is kept. We need to be able to keep the length of fields in
+real-time. We can also store pointers to each stored record in the footer. This
+allow for more efficient lookup (as opposed to scanning through all fields
+until the right one is found).
 
-### Page format: N-ary storage model *(row storage model)*
+### Fixed-length records
 
-The page starts with a ***page header***. At the end of the page, we store 
-pointers to specific records to speed up access times - note that this is only
-useful if the records have variable-length fields, otherwise we can just 
-calculate address based on start address of the page in the fixed-length case.
+Fixed-length records are nice because we always know the starting address of
+record $N$ given their layout in-page. We have a couple of options to consider
+w.r.t retrieval
 
-A page is just a collection of slots, where each slot stores one record. With a
-format following. Each record has a record header - if any attributes in the 
-record are variable-length, this is where it will be stated. Each slot has a
-**`rid`/record id** which has the property that we can identify the address in 
-memory of the record using it.
+- **Packed:** Always append. Less efficient for removal because we need to shift
+all records upwards to maintain it. (excl. if removal of last record). We 
+maintain a counter with how many pages are present, meaning that insertion is
+easy.
+- **Unpacked, bitmapped:** We can remove without shifting, updating the bitmap 
+to indicate that the slot is now free (conversely if we add). Requires a scan
+through the bitmap when we want to insert.
 
-Table names, schemas and other metadata (such as statistical information used
-by the query optimizer) are stored in the **system catalogue/data dictionary/
-metadata repository** which itself is often stored in the DB as a table itself.
+### Variable-length records
 
-#### Bitmasking
+This is more of a hassle. A couple popular ways to handle this is
 
-Imagine the following table
+- **Delimiter symbols:** but what happens when the symbol is required by the
+record somehow?
+- **Array of field offsets:** typically better, and gives direct access to the
+fields (stored as a `(len, data)` pair). Handled `NULL` values pretty elegantly
+since we can just store a 0 length.
 
-| Packed |
-| ------ |
-| record 1  |
-| record 2  |
-| ...       |
-| record N  |
-|  |  | N   |
-| --------  | -------- | -------- |
+The latter of these two is implemented by reserving the *bottom* of the page 
+for the slot array (grows up) and the top of the array for the actual data
+(grows down). 
 
-Where the $N$ at the bottom is in the page header and lists how many records are
-stored in the page. Here, all records are packed together, thus we can imagine
-that it would become cumbersome to delete a record if we had to repack 
-afterwards. To help with this, we use a bitmask to indicate which slots are free
-and which slots aren't.
+This does entail a fair amount of book-keeping and moving stuff around. What
+happens if a field grows and no longer fits in the table? Nightmare. We might
+also encounter the case where the record size > table size.
 
-| Packed |
-| ------ |
-| record 1 |
-| empty |
-| ... |
-| record M |
-| 1 | ... | 0 | 1 | M |
-| -------- | -------- | -------- | -------- |-------- |
+## Column-Store
 
-Where the bitmask is stored in reverse order, i.e. $M, \dots 2, 1$
+We store by attribute in this case. Sometimes it is incredibly inefficient to
+be fetching by row if we only need a couple select attributes.
 
-#### Variable length fields
+The problem with this model is that we have to reconstruct rows via `JOIN` 
+operations - this becomes cumbersome if we have to reconstruct massive rows.
 
-We could, for instance, use a special delimiter symbol like $\$$ to delimit
-fields. However, this becomes problematic if we want to use that symbol in the
-fields.
+## Partition Attributes Across (PAX)
 
-A better solution is to use a field of offsets which indicates where the 
-different fields start. This also provides a clean way of dealing with `NULL`
-values.
+We make minipages within a page. This is compatible wiht slotted pages and is
+cache-friendly. It's sort of a mixture between column store and row store.
 
-These variable-length fields can introduce internal fragmentation if they shrink
-in size *(when a field changes)* or even more problematic, they run out of space
-when a field grows and a record may no longer fit in a page.
+If we partition it in such a way that relevant attributes are in the same page,
+then we will only bring relevant attributes into cache when we load from disk
+or memory.
 
-### Column store
+## Heap File
 
-Here we store columns individually so speed up sequential accesses of these
-fields without needing to read entire rows from disk when unneeded. We always
-store alongside row-id so that we can reconstruct entire tuples. The problem
-here, or cource, is that we have to `JOIN` which can be expensive for large 
-amounts of data.
+Append-based. The two ways that are suggested for implementing this are 
 
-#### Partition Attributes Across (PAX)
+- Linked list of data pages: one for free pages, and one for full pages
+- Page directory with pointers to data pages: we can include additional 
+information such as number of free bytes on the page.
 
-Idea is to decompose a slotted page internally into mini-pages per attribute,
-which is friendlier, bringing only relevant attributes to it, and is compatible
-with slotted pages.
+The directory is much smaller (in terms of raw bytes stored) than a linked list
+of pages. This can make lookup more efficient in terms of IO.
 
-## Alternate organizations
+### Avg. costs as a function of $B$, the number of data pages
 
-### Heap file using linked lists
+- **Scan all records:** $B$
+- **Equality search:** $0.5B$ (assuming exactly one match, we read through half 
+of all data pages on average)
+- **Range search:** $B$
+- **Insertion:** $2$ (one read and one write)
+- **Deletion:** $0.5B + 1$ (must read and write)
 
-We have a header page that points to two doubly-linked lists for each of the
-following:
+### Avg. costs of an ordered file, as a function of $B$ the number of data pages
 
-- Full pages: data page with `next` and `prev` pointers
-- Free pages: data page with `next` and `prev` pointers
+Note that this is implemented as a tree!
 
-However, this is slow if free pages aren't contiguous. Recall, sequential 
-accesses on-disk are orders of magnitude faster than random accesses.
-
-### Heap file using directory
-
-Here we add a level of indirection through a directory which is a collection of
-directory pages that have pointers to data pages. The directory entry can 
-contain the number of free bytes in the page it is pointing to.
-
-### Sorted File
-
-Searching is easier $O(log(B))$, but insertion is more expensive
-$log(B) + 2 \times \frac B 2$.
+- **Scan all records:** $B$
+- **Equality search:** $log_2(B)$ 
+- **Range search:** $log_2(B) + num_{matches}$
+- **Insertion:** $log_2(B) + 2 \times B/2$ (search for the part of the tree to
+insert into, read half of the pages and then write them back to maintain the 
+tree)
+- **Deletion:** $log_2(B) + 2 \times B/2$ (same idea as for insertion)
 
 ## Indexing
 
-**idea:** add a redundant data structure that allows us to go to a piece of 
-data quicker $\rightarrow$ it's just a copy of data in a different order so that
-we can speed up certain queries that we know we will be making. Indexes are 
-built on keys, for example $key_1$, and have no speedup whatsoever for another
-arbitrary $key_2$.
+Speed up lookups for a given key (that isn't necessarily the primary key!)
 
-### B-Tree indexing
+- Hashed-based indexes are great for equality searches. Note that this doesn't
+work well at all for inequality searches.
+- Tree-based indexes are great for range searches
 
-We create several levels of indirection, with a root node and inner nodes. The
-lowest level of the tree *(above the leaves)* points to leaves which are the
-data. The inner nodes are stored s.t. we can easily search for values based on
-some ordering. These inner nodes and root node are pages themselves.
+## Data representation in an index
 
-***This is good in general for range selection***
+There are a few ways that we can do this.
 
-### Alternative 1: primary key indexing
+1. Actual data record with key `k`
+2. `<k, rid of matching data record>`
+3. `<k, list of rids of matching data records>`
 
-This corresponds to how the data is organized on disk
+### Option 1
 
-### Alternatives 2 & 3: secondary key indexing
+The index structure becomes similar to the file organization itself. **At most
+one index can have this structure, logically**. This is expensive to maintain,
+as insertions and deletions need to modify the whole data file.
 
-Here we index based on some non-primary key attribute, which doesn't correspond
-to how data is organized on-disk.
+### Options 2 and 3
 
-> Two data entries are said to be duplicates if they have the same value for the
-> search key ﬁeld associated with the index. A primary index is guaranteed not
-> to contain duplicates, but an index on other (collections of) ﬁelds can contain
-> duplicates. In general, a secondary index contains duplicates. If we know
-> that no duplicates exist, that is, we know that the search key contains some
-> candidate key, we call the index a unique index.
+Easier to maintain as the index doesn't have to reflect the file organization.
 
-### Index Classification
+### Clustered vs unclustered
 
-We distinguish between clustered and unclustered indexes, as well as dense 
-versus sparse indexing. We can also choose to either index based on key, or
-a non-key.
+The cost (in page IOs) of retrieving range scanned records for a clustered 
+index is the number of pages in the file with matching records. For an 
+unclustered index, it is approximately the number of matching index data 
+entries.
 
-- **key:** index on the primary key, which is ordered.
-- **non-key:** we index on some non-primary key, which gives us a path to the
-data allowin for quicker retrieval, but doesn't correspond to how the data is
-ordered on-disk.
+Clustered indexes are more efficient for range searches, but are difficult to 
+maintain. We can either organize on the fly, or do insertions / deletions
+sloppily and reorganize later on.
 
-When the file is orgainized close to the indexing we say that it is clustered,
-otherwise we say that it is unclustered *(straight lines vs. crossing lines 
-between last inner-node and leaves of B-tree)*. Access times vary a lot based
-on whether or not the indexing is clustered.
+### Dense vs sparse index
 
-### Hash Table
+Dense means there is at least one entry per key value, whereas sparse indexes
+have one entry per data pages in the file. Sparse indexes are always clustered,
+and are smaller than dense indexes. However, we must note that there are some
+optimizations that can be done on dense indexes that cannot be done for sparse
+indexes.
 
-We use buckets here instead of a B-Tree. We hash the value of the key, which
-points to a data page, or potentially a chain of linked data pages corresponding
-to that value. In the case of secondary key indexing, we can have duplicates,
-and thus we have different pointers to different buckets stored in a separate
-table of pointers. Primary key indexing points straight to the first data page
-in the chain without any intermediate pointer table.
+- **Dense:** at least one entry per key value (could be more)
+- **Sparse:** one entry per data page *(not per key-value pair)*. These are
+smaller than dense indexes, and are always clustered (since the key is for a 
+whole page).
 
-***This in general is good for equality selections.***
+## Composite search keys
 
-### Composite Search key
+We sarch on field combinations. 
+- For an equality queery, we look for all fields to match the query
+- For range query, we have some (or multiple) non-constant fields
 
-This is for searching on a key combination. We may use two separate indexes
-for this. For example
+Let's say that we have two fields that are using for the composite query, let
+them be `<a, b>`. In which order should we build the index?? There is always
+a trade-off.
 
-```sql
-Select sID
-From Student
-Where sName = ‘Mary’ And GPA > 3.9
-```
+## System catalogs
 
-Contains an equality on `sName = Mary` and a range search for `GPA > 3.9` based
-on two separate keys *(neither of which are the primary key since they aren't
-unique. We may have a `GPA` B-tree and `sName` hash table for example if we do
-this type of search frequently.
-
-We can also build an index on the two of them in combination. However then we
-must choose if we order `<sName, GPA>` or `<GPA, sName>`, and then choose 
-whether use a hash table or B-tree.
-
-## Final Note
-
-> One size does not fit all!
+This falls into the category of metadata. We store information, as relations,
+about the tables that are held in the system / db. 
 

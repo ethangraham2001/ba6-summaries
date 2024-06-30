@@ -1,145 +1,95 @@
 # Lecture 02: Relational Model
 
-This is the model that has prevailed for most use cases.
+This model no longer captures conteptual level. This is the logical design that
+eventually maps down to the physical design. This is the most widely used model
+pretty much everywhere because it can be reasoned about very nicely. Other 
+alternatives that haven't reached the same level of popularity are:
 
-- Models complex data in a very simple structure that is easy to reason about
-- We can make arbitrarily complex queries with relative ease
+- Object-oriented: used by some IBM and Oracle stuff
+- Key-value store / NoSQL: hugely used for many things when less-structured
+data is desired (blob stores).
+- graph-data model: social networks and stuff can be modeled nicely by this
+(Facebook TAO, Linkedin Voldemort).
 
-Recently, NoSQL DBs have been gaining in popularity
+## Basics of relational model
 
-- Function as key value stores
-- Skips the transaction part -> great scalability for analytic workloads
+- **Schema:** structural description
+- **Instance:** actual contents at a given point in time
+- **Cardinality** number of rows
+- **Arity/Degree** number of attributes per-row
 
-## Basics
+Implementations have to handle the `NULL` value. For example, in the GPA case,
+is `NULL` greater than 3.4 or not? Should we even return these rows?
 
-- **Schema:** structural description of the relations in a database.
-- **Instance:** Actual contents at a given point in time. Includes
-cardinality *(number of rows)* and arity/degree *(number of attributes)*
+### Keys
 
-We introduce a `NULL` value that indicates an unknown or undefined attribute,
-but this introduces complexity. If I filter for `gpa >= 3.4`, where does `NULL`
-sit in the predicate?
+- **Superkey:** A set of attributes for which no two distinct tuples can have
+the same values
+- **Key:** A minimal superkey
+- **Candidate key:** when there are multiple keys, they are candidate keys
+- **Primary key:** the candidate key that is chosen by the DBA (db-admin)
 
-## Keys
+Selecting primary key is done during table creation (e.g. SQL)
 
-- **Superkey:** set of attributes s.t. no two distinct tuples can have the same
-values in all key fields *(not necessarily minimal)*
-- **Key:** Which is a minimal superkey
-- **Candidate key:** If there are multiple keys, each is refered to as a 
-candidate key.
-- **Primary key:** the candidate key that is chosen by the DBA *(database 
-admin)*
+```sql
+CREATE TABLE Students
+    (sid CHAR(20),
+    name CHAR(20),
+    login CHAR(10),
+    age INTEGER,
+    gpa FLOAT,
+    PRIMARY KEY(sid))
+```
 
-We note that everything is checked when we insert something
-
-- Check all new values being inserted against the schema
-- check all previous values for duplicates
-
-This is a huge performance stop in the critical path of execution. Integrity
-constraints are expensive, and an insert isn't completed until the check has
-finished. Ideally, this should happen very quickly.
-
-In SQL, consider the following:
+We can also use the `UNIQUE` keyword (language-specific probably) that tells us
+that although the attribute isn't the primary key, it should be unique (e.g. a 
+key)
 
 ```sql
 CREATE TABLE Person
     (ssn CHAR(9),
-     name CHAR(20),
-     licence_num CHAR(10),
-     PRIMARY KEY(ssn),
-     UNIQUE(licence_num))
+    name CHAR(20),
+    licence# CHAR(10),
+    PRIMARY KEY(ssn),
+    UNIQUE(licence#))
 ```
 
-Where `UNIQUE(licence_num)` tells us that although it isn't the primary key, it
-should be unique for all instances.
+### Enforcing referential integrity
 
-### Foreign Keys
+We don't want dangling references, for example. We should be rejecting 
+insertions or updates that aren't valid, e.g. referencing something that doesn't
+exist.
 
-Set of fields in one relation that is used to refer to a tuple in another 
-relation *(corresponds to primary key of the other relation)*. Works like a
-pointer. If all foreign key constraints are enforced, we achieve referential
-integrity which basically means no dangling pointers.
+### Integrity constraints
 
-Referential integrity is hard to maintain as data changes... "if a `Student` is
-deleted, should we delete all `Enrolled` tuples that depend on it? Do we change
-these `Enrolled` to include a default `sid`?
-
-### Integrity Constraints -> IC
- 
-Condition that must be true for any instance of the database. A **legal** 
-instance of a relation is one that satisfies all specified ICs.
+A condition that must be true for any instance of the database, e.g. domain
+constraints. These are specified at creation of schema, checked when anything
+is modified. A **legal** instance is one that satisfies all specified ICs.
 
 ## Relational Algebra
 
-***"Mathematics is the best query language"***
+Mathematical, operational version of SQL. Very simple, only 5 composable 
+operators.
 
-A query is applied to relation instances, and the result of said query is also
-a relation instance. Schemas in the input are fixed, and the schema for the
-result is as well.
+- **Selection $\sigma$:** select a subset of rows
+- **Projection $\pi$:** select a subset of columns
+- **Cross-product $\times$:** combine two relations (may require renaming)
+- **Set-difference $-$**
+- **Union $\bigcup$**
 
-### Operations
+Note that projection will handle duplicate elimination. Up to the implementation
+to handle this, not our concern as the caller.
 
-#### Selection $\sigma$
+We can define more operations such as intersection $\bigcap$, but this can
+be equivalently defined using $-$ and $\bigcup$
 
-For example
+We can also define the join operator which is a compound of cross-product,
+selection, and sometimes projection.
 
-$$
-\sigma_{rating < 9}(s_2)
-$$
+Most common type is the natural join, selecting rows where $r_1$ and $r_2$ have
+equal values.
 
-will select all rows in table $s_2$ that have a rating lower than 9.
-
-#### Projection $\pi$
-
-For example
-
-$$
-\pi_{sname, rating}(s_2)
-$$
-
-selects colums `sname` and `rating` from $s_2$. The projection operator removes 
-duplicates because the output should always be a set.
-
-#### Cross product $\times$
-
-$$
-S_1 \times R_1
-$$
-
-will yield each row of $S_1$ paired with each row of $R_1$. These two tables
-may have a naming conflict *(an attribute with the same name)* -> in this case
-we should rename the attribute for one/both of them.
-
-#### Join
-
-Compound operator that involves cross product, selection, and sometimes 
-projection.
-
-- Compute $R \times S$
-- Select rows where attributes that appear in both relations have equal values
-- project all unique attributes and one copy of each of the common ones *(for
-example $R$ and $S$ both have an attribute `sid`, in this case we will remove
-one duplicate).
-
-#### Condition Join or Theta-Join
-
-$$
-R \bowtie_C S = \sigma_C (R \times S)
-$$
-
-The output schema is the same as that of the cross product, we just select rows
-that satisfy some condition.
-
-We also define the equi-join which is a special case of the theta-join wherein
-we have a conjunction of equalities.
-
-$$
-S_1 \bowtie_{S_1.age = S_2.age}
-$$
-
-#### Division operator
-
-$A / B$ contains all tuples $x$ such that for every tuple $y \in B$, 
-$\exists xy \in A$
-
+We also define the division operator, which is a rather complex one. Useful for
+"for all" queries. *"find `sid` of all sailors who have reserved all boats*"
+It isn't an essential operation, just a sometimes useful shorthand.
 
