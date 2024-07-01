@@ -1,4 +1,4 @@
-# Lecture 07: Query Processing
+# Lecture 07: Query Processing I
 
 ## Steps in query processing
 
